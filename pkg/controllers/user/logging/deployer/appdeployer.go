@@ -11,6 +11,7 @@ import (
 	projectv3 "github.com/rancher/types/apis/project.cattle.io/v3"
 
 	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -141,10 +142,39 @@ func (d *AppDeployer) isDeploySuccess(targetNamespace string, selector map[strin
 	}
 }
 
-func rancherLoggingApp(appCreator, systemProjectID, catalogID, driverDir, dockerRoot string) *projectv3.App {
+func rancherLoggingApp(appCreator, systemProjectID, catalogID, driverDir, dockerRoot string, tolerations *[]corev1.Toleration) *projectv3.App {
 	appName := loggingconfig.AppName
 	namepspace := loggingconfig.LoggingNamespace
 	_, systemProjectName := ref.Parse(systemProjectID)
+
+	answers := map[string]string{
+		//compatible with old version
+		"fluentd.enabled":              "true",
+		"fluentd.cluster.dockerRoot":   dockerRoot,
+		"log-aggregator.enabled":       "true",
+		"log-aggregator.flexVolumeDir": driverDir,
+
+		//new version
+		"fluentd.fluentd-linux.enabled":                     "true",
+		"log-aggregator.log-aggregator-linux.enabled":       "true",
+		"log-aggregator.log-aggregator-linux.flexVolumeDir": driverDir,
+	}
+
+	if tolerations != nil {
+		for i, toleration := range *tolerations {
+			// linux
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-linux.tolerations[%d].key", i)] = toleration.Key
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-linux.tolerations[%d].value", i)] = toleration.Value
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-linux.tolerations[%d].effect", i)] = string(toleration.Effect)
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-linux.tolerations[%d].operator", i)] = string(toleration.Operator)
+
+			// windows
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-windows.tolerations[%d].key", i)] = toleration.Key
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-windows.tolerations[%d].value", i)] = toleration.Value
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-windows.tolerations[%d].effect", i)] = string(toleration.Effect)
+			answers[fmt.Sprintf("log-aggregator.log-aggregator-windows.tolerations[%d].operator", i)] = string(toleration.Operator)
+		}
+	}
 
 	return &projectv3.App{
 		ObjectMeta: metav1.ObjectMeta{
@@ -155,18 +185,7 @@ func rancherLoggingApp(appCreator, systemProjectID, catalogID, driverDir, docker
 			Namespace: systemProjectName,
 		},
 		Spec: projectv3.AppSpec{
-			Answers: map[string]string{
-				//compatible with old version
-				"fluentd.enabled":              "true",
-				"fluentd.cluster.dockerRoot":   dockerRoot,
-				"log-aggregator.enabled":       "true",
-				"log-aggregator.flexVolumeDir": driverDir,
-
-				//new version
-				"fluentd.fluentd-linux.enabled":                     "true",
-				"log-aggregator.log-aggregator-linux.enabled":       "true",
-				"log-aggregator.log-aggregator-linux.flexVolumeDir": driverDir,
-			},
+			Answers:         answers,
 			Description:     "Rancher Logging for collect logs",
 			ExternalID:      catalogID,
 			ProjectName:     systemProjectID,
